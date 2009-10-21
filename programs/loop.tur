@@ -1,0 +1,5 @@
+:program Nieskonczona petla
+q0 => # q1 - > || - -  - <
+q1 => - -  - > || # q0 - <
+:input kopytka_niosa_mnie!
+

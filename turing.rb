@@ -4,30 +4,12 @@
   Interpreter Maszyny Turinga
 
   TODO:
-    domyslne parametry deklaracji przejscia np. a T == a T - -
-    :input moze brac kilka elementow i sprawdza je wszystkie
-    mozliwosc podania "-" jako znaku na tasmie -> najpierw szukamy siebie potem "-"
     sprawdzanie istnienia stanu poczatkowego
     sprawdzanie granicz tasmy
-    po jakims czasie ubijac algo.
-    komendy:
-      :program
-      :input
-      :time
     rysowanie / obliczanie w osobnym watku
     krokowe przetwarzanie
     iteraktywnosc
     funkcje!!
-=end
-
-# alfabet jest generowany
-
-=begin
-  Przykladowy program
-    :program czy ciag %s sklada sie z samych jedynek?
-    q0 # q1 - >
-    q1 => 1 - - > || # True - - || 0 False - -
-    :input 111 110
 =end
 
 STATE_REGEXP = /^[[:alnum:]]+|-$/
@@ -40,6 +22,12 @@ TRUE_STATE = "True"
 class Symbol
   def to_proc
     Proc.new { |*args| args.shift.__send__(self, *args) }
+  end
+end
+
+class Time
+  def self.diff_in_ms(start)
+    ((Time.now - start) * 1000).to_i
   end
 end
 
@@ -76,8 +64,12 @@ module Commands
     @@commands ||= Hash.new(Proc.new { raise "nie znana komenda!" })
   end
 
-  def self.method_missing(symbol, &block)
+  def self.declare(symbol, &block)
     list[symbol.to_s] = block
+  end
+
+  def self.method_missing(symbol, &block)
+    declare(symbol, &block)
   end
 
   def self.call(name, *params)
@@ -97,18 +89,26 @@ class Program
     @rules ||= {}
   end
 
+  def for_state(name)
+    rules[name] ||= {}
+  end
+
   def shift(state, symbol)
-    (rules[state] ||= {})[symbol] ||= [FALSE_STATE, '-', '-']
+    if symbol.to_s != "-"
+      for_state(state)[symbol.to_s] ||= shift(state, "-")
+    else
+      for_state(state)["-"] ||= [FALSE_STATE, '-', '-']
+    end
   end
 
   def add_shift(current_state, tape_symbol, next_state, write_symbol, direction)
     @initial_state ||= current_state
-    (rules[current_state] ||= {})[tape_symbol] = [next_state, write_symbol, direction]
+    for_state(current_state)[tape_symbol] = [next_state, write_symbol, direction]
   end
 end
 
 class Machine
-  attr_accessor :inputs
+  attr_accessor :inputs, :time, :syntax_check
 
   def initialize
     @head = 0
@@ -126,11 +126,13 @@ class Machine
     @tape = ['#'] + input.split('') + ['#']
     @state = program.initial_state
     @head = 0
+    start_time = Time.now
     until @state.is_terminal?
       action = program.shift(@state, current_symbol)
       @state = action[0] if action[0] != '-'
       current_symbol = action[1] if action[1] != '-'
       (action[2] == '<' ? @head -= 1 : @head += 1) if action[2] != '-'
+      raise "maszyna wpadla w petle czasu i poluje na mamuty" if @time and Time.diff_in_ms(start_time) > @time
     end
     @state.is_accepted?
   end
@@ -175,6 +177,21 @@ Commands.program do |machine, program, *question|
   end
 end
 
+Commands.time do |machine, program, time|
+  unless time
+    puts ":time czas - ustawia czas w ms. po jakim koncza sie obliczenia"
+  else
+    machine.time = time.to_i
+  end
+end
+
+Commands.declare("syntax-check") do |machine, *params|
+  unless machine
+    puts ":syntax-check - nie przeprowadza obliczen tylko sprawdza skladnie"
+  else
+    machine.syntax_check = true
+  end
+end
 
 program = Program.new
 machine = Machine.new
@@ -183,12 +200,21 @@ def is_option?(o)
   ARGV.include?(":#{o.to_s}") or ARGV.include?("--#{o.to_s}")
 end
 
+def option_value(o)
+  i = ARGV.index(":#{o.to_s}") || ARGV.index("--#{o.to_s}")
+  raise "parametr '#{o}' byl ostatni" if ARGV.length == (i-1)
+  ARGV[i+1]
+end
+
 [:version, :help].each do |cmd|
   if is_option?(cmd)
     Commands.call(cmd, true)
     exit
   end
 end
+
+Commands.call("syntax-check", machine) if is_option? "syntax-check"
+Commands.call :time, machine, program, option_value(:time) if is_option? :time
 
 begin
   while (line = gets) and (line = line.strip) != ""
@@ -217,12 +243,16 @@ begin
     end
   end
 
-  raise "nie podano zadnego wejscia" unless machine.inputs
+  unless machine.syntax_check
+    raise "nie podano zadnego wejscia" unless machine.inputs
 
-  machine.inputs.each do |input|
-    puts (program.question % input.to_s) + " #{machine.execute(input, program) ? "Tak" : "Nie"}"
+    machine.inputs.each do |input|
+      puts (program.question % input.to_s) + " #{machine.execute(input, program) ? "Tak" : "Nie"}"
+    end
+  else
+    puts "skladnia ok"
   end
-rescue Exception => e
-  puts "blad: #{e.message}"
+rescue Interrupt
+  puts "\ndo widzenia"
 end
 
