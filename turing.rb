@@ -5,10 +5,10 @@
 
   TODO:
     sprawdzanie istnienia stanu poczatkowego
-    sprawdzanie granicz tasmy
+    sprawdzanie granic tasmy
     rysowanie / obliczanie w osobnym watku
     krokowe przetwarzanie
-    iteraktywnosc
+    interaktywnosc
     funkcje!!
 =end
 
@@ -16,8 +16,10 @@ STATE_REGEXP = /^[[:alnum:]]+|-$/
 SYMBOL_REGEXP = /^[[:alnum:]\-#]$/
 DIRECTION_REGEXP = /^[<>-]$/
 
-FALSE_STATE = "False"
-TRUE_STATE = "True"
+FALSE_STATE = "F"
+TRUE_STATE = "T"
+FALSE_STATES = ["False", FALSE_STATE]
+TRUE_STATES = ["True", TRUE_STATE]
 
 class Symbol
   def to_proc
@@ -47,11 +49,11 @@ class String
 	end
 
 	def is_terminal?
-	  self == FALSE_STATE or self == TRUE_STATE
+	  FALSE_STATES.include?(self) or is_accepted?
 	end
 
 	def is_accepted?
-	  self == TRUE_STATE
+	  TRUE_STATES.include?(self)
 	end
 end
 
@@ -64,16 +66,25 @@ module Commands
     @@commands ||= Hash.new(Proc.new { raise "nie znana komenda!" })
   end
 
-  def self.declare(symbol, &block)
-    list[symbol.to_s] = block
+  def self.declare(symbol = nil, arguments = nil, help = nil, &block)
+    unless symbol
+      self.instance_eval &block
+    else
+      help = [":#{symbol.to_s}#{arguments ? " " + arguments : ""}", help].compact.join(' - ')
+      list[symbol.to_s] = [help, block]
+    end
   end
 
-  def self.method_missing(symbol, &block)
-    declare(symbol, &block)
+  def self.method_missing(symbol, arguments = nil, help = nil, &block)
+    declare(symbol, arguments, help, &block)
   end
 
   def self.call(name, *params)
-    list[name.to_s].call(*params)
+    if params.empty?
+      puts list[name.to_s].first
+    else
+      list[name.to_s].last.call(*params)
+    end
   end
 end
 
@@ -143,52 +154,33 @@ class Machine
   end
 end
 
-Commands.help do |*params|
-  if params.empty?
-    puts ":help - wszystkie dostepne komendy"
-  else
+Commands.declare do
+  help nil, "listuje wszystkie dostepne komendy" do
     Commands.call(:version, true)
-    Commands.list.each_value(&:call)
+    puts "sposob uzycia: turing plik [opcje]"
+    Commands.list.each do |key, value|
+      Commands.call(key)
+    end
   end
-end
 
-Commands.version { |*params|
-  if params.empty?
-    puts ":version - podaje wersje interpretera"
-  else
+  version nil, "podaje wersje interpretera" do |*params|
     puts "Interpreter Maszyny Turinga - turing 0.0.2"
     puts "Copyright (C) 2009 Dawid Fatyga"
   end
-}
 
-Commands.input do |machine, program, *inputs|
-  if inputs.empty?
-    puts ":input ciag_znakow [ciag_znakow...] - podaje slowa wejsciowe do maszyny"
-  else
+  input "ciag_znakow [ciag_znakow...]", "podaje slowa wejsciowe do maszyny" do |machine, program, *inputs|
     machine.inputs = inputs
   end
-end
 
-Commands.program do |machine, program, *question|
-  if question.empty?
-    puts ":program pytanie - ustawia pytanie, na ktore odpowiada program"
-  else
+  program "pytanie", "ustawia pytanie, na ktore odpowiada program" do |machine, program, *question|
     program.question = question.join(" ")
   end
-end
 
-Commands.time do |machine, program, time|
-  unless time
-    puts ":time czas - ustawia czas w ms. po jakim koncza sie obliczenia"
-  else
+  time "czas", "ustawia czas w ms. po jakim koncza sie obliczenia" do |machine, program, time|
     machine.time = time.to_i
   end
-end
 
-Commands.declare("syntax-check") do |machine, *params|
-  unless machine
-    puts ":syntax-check - nie przeprowadza obliczen tylko sprawdza skladnie"
-  else
+  declare("syntax-check", nil, "nie przeprowadza obliczen tylko sprawdza skladnie") do |machine|
     machine.syntax_check = true
   end
 end
