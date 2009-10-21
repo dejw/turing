@@ -1,0 +1,5 @@
+:program Czy ciag %s sklada sie z samych jedynek?
+q0 # q1 - >
+q1 => 1 - - > || # True - - || 0 False - -
+:input 111 110
+

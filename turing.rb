@@ -4,8 +4,16 @@
   Interpreter Maszyny Turinga
 
   TODO:
+    domyslne parametry deklaracji przejscia np. a T == a T - -
+    :input moze brac kilka elementow i sprawdza je wszystkie
+    mozliwosc podania "-" jako znaku na tasmie -> najpierw szukamy siebie potem "-"
     sprawdzanie istnienia stanu poczatkowego
     sprawdzanie granicz tasmy
+    po jakims czasie ubijac algo.
+    komendy:
+      :program
+      :input
+      :time
     rysowanie / obliczanie w osobnym watku
     krokowe przetwarzanie
     iteraktywnosc
@@ -14,6 +22,13 @@
 
 # alfabet jest generowany
 
+=begin
+  Przykladowy program
+    :program czy ciag %s sklada sie z samych jedynek?
+    q0 # q1 - >
+    q1 => 1 - - > || # True - - || 0 False - -
+    :input 111 110
+=end
 
 STATE_REGEXP = /^[[:alnum:]]+|-$/
 SYMBOL_REGEXP = /^[[:alnum:]\-#]$/
@@ -52,9 +67,31 @@ class String
 	end
 end
 
+# Komendy to bloki, ktore powinny pobierac referencje na maszyne, program i inne parametry
+module Commands
+  class Error < Exception
+  end
+
+  def self.list
+    @@commands ||= Hash.new(Proc.new { raise "nie znana komenda!" })
+  end
+
+  def self.method_missing(symbol, &block)
+    list[symbol.to_s] = block
+  end
+
+  def self.call(name, *params)
+    list[name.to_s].call(*params)
+  end
+end
 
 class Program
   attr_reader :initial_state
+  attr_accessor :question
+
+  def initialize
+    @question = "Czy %s spełnia warunek?"
+  end
 
   def rules
     @rules ||= {}
@@ -71,10 +108,10 @@ class Program
 end
 
 class Machine
-  def initialize(input, state, head = 0)
-    @tape = ['#'] + input.split('') + ['#']
-    @head = head
-    @state = state
+  attr_accessor :inputs
+
+  def initialize
+    @head = 0
   end
 
   def current_symbol
@@ -85,7 +122,10 @@ class Machine
     @tape[@head] = symbol
   end
 
-  def execute(program)
+  def execute(input, program)
+    @tape = ['#'] + input.split('') + ['#']
+    @state = program.initial_state
+    @head = 0
     until @state.is_terminal?
       action = program.shift(@state, current_symbol)
       @state = action[0] if action[0] != '-'
@@ -101,34 +141,88 @@ class Machine
   end
 end
 
-input = nil
-program = Program.new
-
-while line = gets
-  line.strip!
-  if line.start_with?(":input")
-    cmd, input = line.split(' ')
-    raise "blad w :input!" unless input
+Commands.help do |*params|
+  if params.empty?
+    puts ":help - wszystkie dostepne komendy"
   else
-    state, shifts = line.split(":").collect(&:strip)
-    unless shifts then  #q0 a q1 b >
-      shifts = state.split("|").collect(&:strip)
-      shifts = shifts.collect { |shift| shift.split(' ') }
-      shifts.each do |shift|
-        from_state = shift[0].skip!(STATE_REGEXP)
-        from_char = shift[1].skip!(SYMBOL_REGEXP)
-        to_state = shift[2].skip!(STATE_REGEXP)
-        to_char = shift[3].skip!(SYMBOL_REGEXP)
-        direction = shift[4].skip!(DIRECTION_REGEXP)
-
-        program.add_shift(from_state, from_char, to_state, to_char, direction)
-      end
-    else                  #q0 : a q1 b > |
-      shifts = shifts.split("|").collect(&:strip)
-      raise "nie ma jeszcze!"
-    end
+    Commands.call(:version, true)
+    Commands.list.each_value(&:call)
   end
 end
-raise "nie ma slowa poczatkowego" unless input
-puts Machine.new(input, program.initial_state).execute(program)
+
+Commands.version { |*params|
+  if params.empty?
+    puts ":version - podaje wersje interpretera"
+  else
+    puts "Interpreter Maszyny Turinga - turing 0.0.2"
+    puts "Copyright (C) 2009 Dawid Fatyga"
+  end
+}
+
+Commands.input do |machine, program, *inputs|
+  if inputs.empty?
+    puts ":input ciag_znakow [ciag_znakow...] - podaje slowa wejsciowe do maszyny"
+  else
+    machine.inputs = inputs
+  end
+end
+
+Commands.program do |machine, program, *question|
+  if question.empty?
+    puts ":program pytanie - ustawia pytanie, na ktore odpowiada program"
+  else
+    program.question = question.join(" ")
+  end
+end
+
+
+program = Program.new
+machine = Machine.new
+
+def is_option?(o)
+  ARGV.include?(":#{o.to_s}") or ARGV.include?("--#{o.to_s}")
+end
+
+[:version, :help].each do |cmd|
+  if is_option?(cmd)
+    Commands.call(cmd, true)
+    exit
+  end
+end
+
+begin
+  while (line = gets) and (line = line.strip) != ""
+    if line.start_with?(":") and line.skip!(":")
+      params = line.split(" ")
+      name = params.shift
+      Commands.call(name, machine, program, *params)
+    else
+      state, shifts = line.split("=>").collect(&:strip)
+      unless shifts then
+        shifts = state
+        state = nil
+      end
+
+      shifts.split("||").collect(&:strip).each do |tuple|
+        tuple = tuple.collect { |shift| shift.split(' ') }
+        tuple.each do |s|
+          state ||= s.shift.skip!(STATE_REGEXP)
+          symbol = s.shift.skip!(SYMBOL_REGEXP)
+          next_state = s.shift.skip!(STATE_REGEXP)
+          write_symbol = (s.shift or "-").skip!(SYMBOL_REGEXP)
+          direction = (s.shift or "-").skip!(DIRECTION_REGEXP)
+          program.add_shift(state, symbol, next_state, write_symbol, direction)
+        end
+      end
+    end
+  end
+
+  raise "nie podano zadnego wejscia" unless machine.inputs
+
+  machine.inputs.each do |input|
+    puts (program.question % input.to_s) + " #{machine.execute(input, program) ? "Tak" : "Nie"}"
+  end
+rescue Exception => e
+  puts "blad: #{e.message}"
+end
 
